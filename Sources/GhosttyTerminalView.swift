@@ -14,6 +14,9 @@ class GhosttyApp {
     private(set) var app: ghostty_app_t?
     private(set) var config: ghostty_config_t?
 
+    // Track the currently focused surface for clipboard operations
+    var focusedSurface: ghostty_surface_t?
+
     private init() {
         initializeGhostty()
     }
@@ -51,7 +54,19 @@ class GhosttyApp {
             return false
         }
         runtimeConfig.read_clipboard_cb = { userdata, location, state in
-            // Read clipboard
+            // Read clipboard and complete the request
+            DispatchQueue.main.async {
+                guard let surface = GhosttyApp.shared.focusedSurface else { return }
+
+                if let string = NSPasteboard.general.string(forType: .string) {
+                    string.withCString { ptr in
+                        ghostty_surface_complete_clipboard_request(surface, ptr, state, true)
+                    }
+                } else {
+                    // No clipboard content, complete with nil
+                    ghostty_surface_complete_clipboard_request(surface, nil, state, true)
+                }
+            }
         }
         runtimeConfig.write_clipboard_cb = { userdata, location, content, len, confirm in
             // Write clipboard
@@ -162,6 +177,9 @@ class GhosttyNSView: NSView {
             return
         }
 
+        // Set as focused surface for clipboard operations
+        GhosttyApp.shared.focusedSurface = surface
+
         // Set initial size immediately after creation
         ghostty_surface_set_size(
             surface,
@@ -233,6 +251,45 @@ class GhosttyNSView: NSView {
     // MARK: - Input Handling
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        GhosttyApp.shared.focusedSurface = surface
+        return super.becomeFirstResponder()
+    }
+
+    // MARK: - Copy/Paste Support
+
+    @objc func copy(_ sender: Any?) {
+        guard let surface = surface else { return }
+
+        // Check if there's a selection and read it
+        if ghostty_surface_has_selection(surface) {
+            var text = ghostty_text_s()
+            if ghostty_surface_read_selection(surface, &text) {
+                if let ptr = text.text, text.text_len > 0 {
+                    let string = String(cString: ptr)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(string, forType: .string)
+                }
+                ghostty_surface_free_text(surface, &text)
+            }
+        }
+    }
+
+    @objc func paste(_ sender: Any?) {
+        guard let surface = surface else { return }
+
+        // Read from pasteboard and send to terminal as text input
+        if let string = NSPasteboard.general.string(forType: .string) {
+            string.withCString { ptr in
+                ghostty_surface_text(surface, ptr, UInt(string.utf8.count))
+            }
+        }
+    }
+
+    override func selectAll(_ sender: Any?) {
+        // Terminal select all - not typically needed but good for completeness
+    }
 
     private func ghosttyCharacters(from event: NSEvent) -> String? {
         guard let chars = event.characters, !chars.isEmpty else { return nil }
@@ -313,6 +370,7 @@ class GhosttyNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        GhosttyApp.shared.focusedSurface = surface
         guard let surface = surface else { return }
         let point = convert(event.locationInWindow, from: nil)
         ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, modsFromEvent(event))
