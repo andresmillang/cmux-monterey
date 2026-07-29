@@ -104,6 +104,7 @@ class GhosttyNSView: NSView {
     private var displayLink: CVDisplayLink?
     private var metalDevice: MTLDevice?
     private var surfaceCreated = false
+    private var isVisible = true
 
     override func makeBackingLayer() -> CALayer {
         let metalLayer = CAMetalLayer()
@@ -410,6 +411,27 @@ class GhosttyNSView: NSView {
         )
     }
 
+    // MARK: - Visibility Control
+
+    func setVisible(_ visible: Bool) {
+        guard isVisible != visible else { return }
+        isVisible = visible
+
+        if visible {
+            // Resume rendering when becoming visible
+            if let displayLink = displayLink {
+                CVDisplayLinkStart(displayLink)
+            }
+            // Update focused surface
+            GhosttyApp.shared.focusedSurface = surface
+        } else {
+            // Pause rendering when hidden to save resources
+            if let displayLink = displayLink {
+                CVDisplayLinkStop(displayLink)
+            }
+        }
+    }
+
     deinit {
         if let displayLink = displayLink {
             CVDisplayLinkStop(displayLink)
@@ -423,19 +445,21 @@ class GhosttyNSView: NSView {
 // MARK: - SwiftUI Wrapper
 
 struct GhosttyTerminalView: NSViewRepresentable {
+    var isVisible: Bool = true
+
     func makeNSView(context: Context) -> GhosttyNSView {
         let view = GhosttyNSView(frame: .zero)
-        // Focus after view is in window
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            view.window?.makeFirstResponder(view)
-        }
         return view
     }
 
     func updateNSView(_ nsView: GhosttyNSView, context: Context) {
-        // Focus on tab switch
-        DispatchQueue.main.async {
-            nsView.window?.makeFirstResponder(nsView)
+        nsView.setVisible(isVisible)
+
+        // Only focus when becoming visible
+        if isVisible {
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
         }
     }
 }

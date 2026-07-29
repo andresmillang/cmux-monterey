@@ -15,13 +15,15 @@ struct ContentView: View {
                 .fill(Color(nsColor: .separatorColor))
                 .frame(width: 1)
 
-            // Terminal Content
-            if let selectedId = tabManager.selectedTabId,
-               let tab = tabManager.tabs.first(where: { $0.id == selectedId }) {
-                GhosttyTerminalView()
-                    .id(tab.id)
-            } else {
-                Color(nsColor: .windowBackgroundColor)
+            // Terminal Content - Keep all views alive, only show selected
+            ZStack {
+                ForEach(tabManager.tabs) { tab in
+                    let isSelected = tabManager.selectedTabId == tab.id
+                    GhosttyTerminalView(isVisible: isSelected)
+                        .id(tab.id)
+                        .opacity(isSelected ? 1 : 0)
+                        .allowsHitTesting(isSelected)
+                }
             }
         }
         .frame(minWidth: 800, minHeight: 600)
@@ -73,6 +75,8 @@ struct TabItemView: View {
     @EnvironmentObject var tabManager: TabManager
     @ObservedObject var tab: Tab
     @State private var isHovering = false
+    @State private var isEditing = false
+    @State private var editingTitle = ""
 
     var isSelected: Bool {
         tabManager.selectedTabId == tab.id
@@ -80,25 +84,63 @@ struct TabItemView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "terminal")
-                .font(.system(size: 12))
-                .foregroundColor(isSelected ? .white : .secondary)
+            // Clickable area for selecting the tab
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 12))
+                    .foregroundColor(isSelected ? .white : .secondary)
 
-            Text(tab.title)
-                .font(.system(size: 12))
-                .foregroundColor(isSelected ? .white : .primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                if isEditing {
+                    TextField("", text: $editingTitle, onCommit: {
+                        tab.title = editingTitle.isEmpty ? tab.title : editingTitle
+                        isEditing = false
+                    })
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(isSelected ? .white : .primary)
+                    .onExitCommand {
+                        isEditing = false
+                    }
+                } else {
+                    Text(tab.title)
+                        .font(.system(size: 12))
+                        .foregroundColor(isSelected ? .white : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if !isEditing {
+                    tabManager.selectTab(tab)
+                }
+            }
 
             Spacer()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if !isEditing {
+                        tabManager.selectTab(tab)
+                    }
+                }
 
-            if isHovering || isSelected {
+            // Close button - separate from tap area
+            if (isHovering || isSelected) && !isEditing {
                 Button(action: { tabManager.closeTab(tab) }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(isSelected ? .white.opacity(0.7) : .secondary)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
                 .opacity(tabManager.tabs.count > 1 ? 1 : 0)
             }
         }
@@ -109,12 +151,19 @@ struct TabItemView: View {
                 .fill(isSelected ? Color.accentColor : (isHovering ? Color(nsColor: .controlBackgroundColor).opacity(0.5) : Color.clear))
         )
         .padding(.horizontal, 6)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            tabManager.selectTab(tab)
-        }
         .onHover { hovering in
             isHovering = hovering
+        }
+        .contextMenu {
+            Button("Rename") {
+                editingTitle = tab.title
+                isEditing = true
+            }
+            Divider()
+            Button("Close Tab") {
+                tabManager.closeTab(tab)
+            }
+            .disabled(tabManager.tabs.count <= 1)
         }
     }
 }
