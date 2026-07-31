@@ -43,15 +43,27 @@ struct VerticalTabsSidebar: View {
                     .font(.headline)
                     .foregroundColor(.secondary)
                 Spacer()
-                Button(action: { tabManager.addTab() }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
+                Color.clear
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+                    .overlay(
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                    )
+                    .onTapGesture {
+                        tabManager.addTab()
+                    }
+                    .onHover { hovering in
+                        if hovering {
+                            NSCursor.pointingHand.push()
+                        } else {
+                            NSCursor.pop()
+                        }
+                    }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 6)
 
             Divider()
 
@@ -75,16 +87,18 @@ struct TabItemView: View {
     @EnvironmentObject var tabManager: TabManager
     @ObservedObject var tab: Tab
     @State private var isHovering = false
+    @State private var isHoveringClose = false
     @State private var isEditing = false
     @State private var editingTitle = ""
+    @FocusState private var isTextFieldFocused: Bool
 
     var isSelected: Bool {
         tabManager.selectedTabId == tab.id
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Clickable area for selecting the tab
+        HStack(spacing: 0) {
+            // Tab content - icon and title
             HStack(spacing: 8) {
                 Image(systemName: "terminal")
                     .font(.system(size: 12))
@@ -92,14 +106,23 @@ struct TabItemView: View {
 
                 if isEditing {
                     TextField("", text: $editingTitle, onCommit: {
-                        tab.title = editingTitle.isEmpty ? tab.title : editingTitle
+                        tabManager.renameTab(tab, to: editingTitle)
                         isEditing = false
+                        isTextFieldFocused = false
                     })
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundColor(isSelected ? .white : .primary)
+                    .focused($isTextFieldFocused)
                     .onExitCommand {
                         isEditing = false
+                        isTextFieldFocused = false
+                    }
+                    .onAppear {
+                        // Delay focus slightly to ensure view is ready
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            isTextFieldFocused = true
+                        }
                     }
                 } else {
                     Text(tab.title)
@@ -108,7 +131,12 @@ struct TabItemView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
+
+                Spacer()
             }
+            .padding(.leading, 10)
+            .padding(.trailing, 4)
+            .padding(.vertical, 8)
             .contentShape(Rectangle())
             .onTapGesture {
                 if !isEditing {
@@ -116,41 +144,41 @@ struct TabItemView: View {
                 }
             }
 
-            Spacer()
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if !isEditing {
-                        tabManager.selectTab(tab)
+            // Close button with larger hit area
+            if (isHovering || isSelected) && !isEditing && tabManager.tabs.count > 1 {
+                Color.clear
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+                    .overlay(
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(isSelected ? .white.opacity(isHoveringClose ? 1.0 : 0.7) : (isHoveringClose ? .primary : .secondary))
+                    )
+                    .onHover { hovering in
+                        isHoveringClose = hovering
+                        if hovering {
+                            NSCursor.pointingHand.push()
+                        } else {
+                            NSCursor.pop()
+                        }
                     }
-                }
-
-            // Close button - separate from tap area
-            if (isHovering || isSelected) && !isEditing {
-                Button(action: { tabManager.closeTab(tab) }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(isSelected ? .white.opacity(0.7) : .secondary)
-                        .frame(width: 16, height: 16)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .onHover { hovering in
-                    if hovering {
-                        NSCursor.pointingHand.push()
-                    } else {
-                        NSCursor.pop()
+                    .onTapGesture {
+                        tabManager.closeTab(tab)
                     }
-                }
-                .opacity(tabManager.tabs.count > 1 ? 1 : 0)
+                    .padding(.trailing, 6)
+            } else {
+                // Placeholder to maintain consistent layout
+                Color.clear
+                    .frame(width: 28, height: 28)
+                    .padding(.trailing, 6)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.accentColor : (isHovering ? Color(nsColor: .controlBackgroundColor).opacity(0.5) : Color.clear))
         )
         .padding(.horizontal, 6)
+        .contentShape(Rectangle())
         .onHover { hovering in
             isHovering = hovering
         }
@@ -158,12 +186,18 @@ struct TabItemView: View {
             Button("Rename") {
                 editingTitle = tab.title
                 isEditing = true
+                // Focus will be set by onAppear of TextField
             }
             Divider()
             Button("Close Tab") {
                 tabManager.closeTab(tab)
             }
             .disabled(tabManager.tabs.count <= 1)
+        }
+        .onChange(of: isEditing) { newValue in
+            if !newValue {
+                isTextFieldFocused = false
+            }
         }
     }
 }
