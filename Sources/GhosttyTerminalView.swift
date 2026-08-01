@@ -50,7 +50,18 @@ class GhosttyApp {
             }
         }
         runtimeConfig.action_cb = { app, target, action in
-            // Handle actions
+            // Track working directory reports (OSC 7) so sessions can be
+            // restored in the right directory.
+            if action.tag == GHOSTTY_ACTION_PWD,
+               target.tag == GHOSTTY_TARGET_SURFACE,
+               let pwdPtr = action.action.pwd.pwd {
+                let pwd = String(cString: pwdPtr)
+                let surface = target.target.surface
+                DispatchQueue.main.async {
+                    TerminalRegistry.shared.view(forSurface: surface)?.lastReportedPwd = pwd
+                }
+                return true
+            }
             return false
         }
         runtimeConfig.read_clipboard_cb = { userdata, location, state in
@@ -97,14 +108,49 @@ class GhosttyApp {
     }
 }
 
+// MARK: - Terminal Registry
+
+// Maps tab IDs to their live terminal views so TabManager can read scrollback
+// and working directories when saving the session.
+final class TerminalRegistry {
+    static let shared = TerminalRegistry()
+
+    private let table = NSMapTable<NSUUID, GhosttyNSView>.strongToWeakObjects()
+
+    private init() {}
+
+    func register(_ view: GhosttyNSView, for id: UUID) {
+        table.setObject(view, forKey: id as NSUUID)
+    }
+
+    func view(for id: UUID) -> GhosttyNSView? {
+        table.object(forKey: id as NSUUID)
+    }
+
+    func view(forSurface surface: ghostty_surface_t?) -> GhosttyNSView? {
+        guard let surface = surface,
+              let enumerator = table.objectEnumerator() else { return nil }
+        for case let view as GhosttyNSView in enumerator {
+            if view.surface == surface { return view }
+        }
+        return nil
+    }
+}
+
 // MARK: - Ghostty Surface View
 
 class GhosttyNSView: NSView {
-    private var surface: ghostty_surface_t?
+    fileprivate var surface: ghostty_surface_t?
     private var displayLink: CVDisplayLink?
     private var metalDevice: MTLDevice?
     private var surfaceCreated = false
     private var isVisible = true
+
+    // Session restore support
+    var tabId: UUID?
+    var startupDirectory: String?
+    var restoreScriptPath: String?
+    var lastReportedPwd: String?
 
     override func makeBackingLayer() -> CALayer {
         let metalLayer = CAMetalLayer()
@@ -170,8 +216,23 @@ class GhosttyNSView: NSView {
 
         surfaceConfig.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
 
-        // Create the surface
-        surface = ghostty_surface_new(app, &surfaceConfig)
+        // Create the surface, wiring in the saved working directory and (for
+        // restored tabs) the restore script that replays saved scrollback.
+        // withCString keeps the C strings alive for the duration of the call.
+        let workingDirectory = startupDirectory
+            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        workingDirectory.withCString { wdPtr in
+            surfaceConfig.working_directory = wdPtr
+            if let scriptPath = restoreScriptPath,
+               FileManager.default.isExecutableFile(atPath: scriptPath) {
+                scriptPath.withCString { cmdPtr in
+                    surfaceConfig.command = cmdPtr
+                    surface = ghostty_surface_new(app, &surfaceConfig)
+                }
+            } else {
+                surface = ghostty_surface_new(app, &surfaceConfig)
+            }
+        }
 
         if surface == nil {
             print("Failed to create ghostty surface")
@@ -411,6 +472,34 @@ class GhosttyNSView: NSView {
         )
     }
 
+    // MARK: - Session Persistence
+
+    // Reads the entire screen contents including scrollback as plain text.
+    func readAllText() -> String? {
+        guard let surface = surface else { return nil }
+
+        var topLeft = ghostty_point_s()
+        topLeft.tag = GHOSTTY_POINT_SCREEN
+        topLeft.coord = GHOSTTY_POINT_COORD_TOP_LEFT
+
+        var bottomRight = ghostty_point_s()
+        bottomRight.tag = GHOSTTY_POINT_SCREEN
+        bottomRight.coord = GHOSTTY_POINT_COORD_BOTTOM_RIGHT
+
+        var selection = ghostty_selection_s()
+        selection.top_left = topLeft
+        selection.bottom_right = bottomRight
+        selection.rectangle = false
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+
+        guard let ptr = text.text, text.text_len > 0 else { return nil }
+        let buffer = UnsafeRawBufferPointer(start: ptr, count: Int(text.text_len))
+        return String(bytes: buffer, encoding: .utf8)
+    }
+
     // MARK: - Visibility Control
 
     func setVisible(_ visible: Bool) {
@@ -445,10 +534,15 @@ class GhosttyNSView: NSView {
 // MARK: - SwiftUI Wrapper
 
 struct GhosttyTerminalView: NSViewRepresentable {
+    let tab: Tab
     var isVisible: Bool = true
 
     func makeNSView(context: Context) -> GhosttyNSView {
         let view = GhosttyNSView(frame: .zero)
+        view.tabId = tab.id
+        view.startupDirectory = tab.currentDirectory
+        view.restoreScriptPath = tab.restoreScriptPath
+        TerminalRegistry.shared.register(view, for: tab.id)
         return view
     }
 

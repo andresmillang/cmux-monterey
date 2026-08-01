@@ -19,7 +19,7 @@ struct ContentView: View {
             ZStack {
                 ForEach(tabManager.tabs) { tab in
                     let isSelected = tabManager.selectedTabId == tab.id
-                    GhosttyTerminalView(isVisible: isSelected)
+                    GhosttyTerminalView(tab: tab, isVisible: isSelected)
                         .id(tab.id)
                         .opacity(isSelected ? 1 : 0)
                         .allowsHitTesting(isSelected)
