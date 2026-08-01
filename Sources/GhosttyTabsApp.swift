@@ -1,8 +1,15 @@
 import SwiftUI
 
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
+    }
+}
+
 @main
 struct GhosttyTabsApp: App {
-    private var tabManager: TabManager { TabManager.shared }
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var tabManager = TabManager.shared
 
     var body: some Scene {
         WindowGroup {
