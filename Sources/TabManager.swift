@@ -58,7 +58,7 @@ class TabManager: ObservableObject {
         return appDir.appendingPathComponent("session.json")
     }()
 
-    init() {
+    private init() {
         // Try to restore saved state
         if restoreState() {
             hasRestoredState = true
@@ -68,7 +68,6 @@ class TabManager: ObservableObject {
         }
 
         // Mark initialization complete after a short delay
-        // This prevents accidental state overwrites during app launch
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.initializationComplete = true
         }
