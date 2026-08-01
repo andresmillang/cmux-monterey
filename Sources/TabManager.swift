@@ -43,8 +43,13 @@ extension Notification.Name {
 }
 
 class TabManager: ObservableObject {
+    static let shared = TabManager()
+
     @Published var tabs: [Tab] = []
     @Published var selectedTabId: UUID?
+
+    private var hasRestoredState = false
+    private var initializationComplete = false
 
     private static let stateFileURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -55,9 +60,17 @@ class TabManager: ObservableObject {
 
     init() {
         // Try to restore saved state
-        if !restoreState() {
+        if restoreState() {
+            hasRestoredState = true
+        } else {
             // Only add a fresh tab if no state was restored
             addTab(saveState: false)
+        }
+
+        // Mark initialization complete after a short delay
+        // This prevents accidental state overwrites during app launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.initializationComplete = true
         }
 
         // Listen for tab state changes (like renames)
@@ -72,6 +85,24 @@ class TabManager: ObservableObject {
         // Save state when app terminates
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.saveState()
+        }
+
+        // Also save when app resigns active (user switches away or system sleep)
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.saveState()
+        }
+
+        // Save when app is hidden
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didHideNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in

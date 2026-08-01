@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct GhosttyTabsApp: App {
-    @StateObject private var tabManager = TabManager()
+    private var tabManager: TabManager { TabManager.shared }
 
     var body: some Scene {
         WindowGroup {
