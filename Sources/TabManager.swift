@@ -13,12 +13,10 @@ class Tab: Identifiable, ObservableObject {
 }
 
 class TabManager: ObservableObject {
-    static let shared = TabManager()
-
     @Published var tabs: [Tab] = []
     @Published var selectedTabId: UUID?
 
-    private init() {
+    init() {
         addTab()
     }
 
